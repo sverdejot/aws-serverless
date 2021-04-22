@@ -1,0 +1,90 @@
+service: aws-serverless-mldevops-sverdejot
+
+package:
+  exclude:
+    - ./**
+  include:
+    - functions/**
+
+custom:
+  region: us-east-1
+  prefix: aws-serverless-mldevops
+  metadataTable:  ${self:custom.prefix}Metadatos
+  datasetsBucket: ${self:custom.prefix}-datasets.${self:custom.region}.sverdejot.es
+  resultsBucket: ${self:custom.prefix}-results.${self:custom.region}.sverdejot.es
+  pythonRequirements:
+    dockerizePip: true
+
+provider:
+  name: aws
+  endpointType: regional
+  runtime: python3.6
+  region: ${self:custom.region}
+  memorySize: 2048
+  timeout: 30
+  environment:
+    METADATA_TABLE: ${self:custom.metadataTable}
+    DATASETS_BUCKET: ${self:custom.datasetsBucket}
+    RESULTS_BUCKET: ${self:custom.resultsBucket}
+    MODEL_PATH: model.joblib
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - s3:PutObject
+        - s3:GetObject
+      Resource:
+        - arn:aws:s3:::${self:custom.datasetsBucket}/*
+        - arn:aws:s3:::${self:custom.resultsBucket}/*
+    - Effect: Allow
+      Action:
+      - dynamodb:GetItem
+      - dynamodb:Query
+      - dynamodb:PutItem
+      - dynamodb:DeleteItem
+      Resource: arn:aws:dynamodb:${self:custom.region}:*:table/${self:custom.metadataTable}
+
+functions:
+  train:
+    handler: functions/train.lambda_handler
+    layers:
+      - arn:aws:lambda:us-east-1:516132306915:layer:pandas_sk_learn:1
+    events:
+      - s3:
+          bucket: ${self:custom.datasetsBucket}
+          event: s3:ObjectCreated:*
+          rules:
+            - prefix: train
+            - suffix: .csv
+  classify:
+    handler: functions/classify.lambda_handler
+    layers:
+      - arn:aws:lambda:us-east-1:516132306915:layer:pandas_sk_learn:1
+    events:
+      - http:
+          path: classify
+          method: get
+
+resources:
+  Resources:
+    MetadataTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:custom.metadataTable}
+        AttributeDefinitions:
+          - AttributeName: pk
+            AttributeType: S
+          - AttributeName: sk
+            AttributeType: N
+        KeySchema:
+          - AttributeName: pk
+            KeyType: HASH
+          - AttributeName: sk
+            KeyType: RANGE
+        BillingMode: PAY_PER_REQUEST
+    ResultsBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.resultsBucket}
+
+plugins:
+  - serverless-python-requirements
